@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>音乐播放器</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -42,6 +42,57 @@
         /* Search */
         .search-area { width: 100%; display: flex; flex-direction: column; gap: 8px; }
         .search-row  { display: flex; gap: 8px; }
+        /* 新增：搜索提示文字 */
+        .search-tip {
+            font-size: 12px;
+            color: var(--purple-light);
+            padding-left: 4px;
+        }
+        /* 新增：搜索历史容器 */
+        #searchHistory {
+            width: 100%;
+            display: none;
+            flex-wrap: wrap;
+            gap: 6px;
+            padding: 8px 10px;
+            background: rgba(255,255,255,0.6);
+            border-radius: 8px;
+            max-height: 80px;
+            overflow-x: auto;
+            align-items: center;
+        }
+        .history-label {
+            font-size: 12px;
+            color: var(--purple-dark);
+            white-space: nowrap;
+        }
+        .history-item {
+            font-size: 12px;
+            padding: 3px 8px;
+            border-radius: 6px;
+            background: rgba(91,44,131,0.12);
+            color: var(--purple-dark);
+            cursor: pointer;
+            white-space: nowrap;
+            display: flex;
+            align-items: center;
+            gap:4px;
+        }
+        .history-item:hover {
+            background: var(--purple-light);
+            color:#fff;
+        }
+        .history-del {
+            font-size:14px;
+            line-height:1;
+        }
+        .history-clear {
+            margin-left:auto;
+            font-size:11px;
+            color:#888;
+            cursor:pointer;
+            white-space: nowrap;
+        }
 
         #searchInput {
             flex: 1;
@@ -196,9 +247,11 @@
 
         /* Scrollbars */
         .lyric-wrap::-webkit-scrollbar,
-        #results::-webkit-scrollbar { width: 5px; }
+        #results::-webkit-scrollbar,
+        #searchHistory::-webkit-scrollbar { width: 5px; height:5px; }
         .lyric-wrap::-webkit-scrollbar-thumb,
-        #results::-webkit-scrollbar-thumb { background: rgba(91,44,131,0.25); border-radius: 4px; }
+        #results::-webkit-scrollbar-thumb,
+        #searchHistory::-webkit-scrollbar-thumb { background: rgba(91,44,131,0.25); border-radius: 4px; }
 
         /* Spinner */
         .spinner {
@@ -212,6 +265,52 @@
         /* Attribution */
         .attr { font-size: 10px; font-family: sans-serif; color: rgba(91,44,131,0.35); text-align: center; }
         .attr a { color: inherit; }
+
+        /* ========== 新增移动端响应式适配（解决手机歌词窄问题） ========== */
+        @media screen and (max-width:768px) {
+            body {
+                flex-direction: column;
+                height:100vh;
+                overflow-y:auto;
+            }
+            .left-panel {
+                width:100vw;
+                min-width:unset;
+                height:auto;
+                padding:16px 12px 20px;
+            }
+            .album-art-wrap {
+                width:130px;
+                height:130px;
+            }
+            .lyric-wrap {
+                width:100vw;
+                height:60vh;
+                padding:30px 15px;
+            }
+            .lyric-line {
+                width:100%;
+                text-align:center;
+                font-size:24px;
+                margin:24px auto;
+            }
+            .lyric-line .cn {
+                font-size:16px;
+            }
+            .lyric-placeholder {
+                font-size:16px;
+            }
+            #songTitle {
+                font-size:15px;
+            }
+            .search-row {
+                flex-wrap:wrap;
+            }
+            #searchInput {
+                width:100%;
+                flex:none;
+            }
+        }
     </style>
 </head>
 <body>
@@ -225,13 +324,20 @@
     <div class="search-area">
         <div class="search-row">
             <input id="searchInput" type="text" placeholder="搜索歌曲、歌手…" />
+            <!-- 需求1：删除QQ音乐(tencent)、酷狗(kugou)选项 -->
             <select id="sourceSelect" title="音乐源">
                 <option value="netease">网易云</option>
                 <option value="kuwo">酷我</option>
-                <option value="tencent">QQ音乐</option>
-                <option value="kugou">酷狗</option>
             </select>
             <button id="searchBtn">搜索</button>
+        </div>
+        <!-- 需求3：外文搜索提示 -->
+        <div class="search-tip">提示：外文歌曲建议输入日文/英文原名检索，中文译名可能无法匹配</div>
+        <!-- 需求4：新增搜索历史DOM容器 -->
+        <div id="searchHistory">
+            <span class="history-label">搜索历史：</span>
+            <div id="historyList"></div>
+            <span class="history-clear" id="clearHistoryBtn">清空全部</span>
         </div>
         <div id="results"></div>
     </div>
@@ -287,8 +393,8 @@ const API = 'https://music-api.gdstudio.xyz/api.php';
 // corsproxy.io wraps any URL to bypass browser CORS
 const PROXY = 'https://corsproxy.io/?url=';
 
-// Stable sources (per GD docs updated 2026-02)
-const STABLE = ['netease', 'kuwo', 'joox'];
+// Stable sources (需求1：移除tencent、kugou)
+const STABLE = ['netease', 'kuwo'];
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
 const audio        = document.getElementById('audioPlayer');
@@ -308,12 +414,19 @@ const timeTotal    = document.getElementById('timeTotal');
 const statusMsg    = document.getElementById('statusMsg');
 const lyricBox     = document.getElementById('lyricScrollBox');
 const btnCn        = document.getElementById('switchCn');
+// 需求4：新增历史DOM节点
+const historyWrap  = document.getElementById('searchHistory');
+const historyList  = document.getElementById('historyList');
+const clearHistoryBtn = document.getElementById('clearHistoryBtn');
 
 // ─── State ────────────────────────────────────────────────────────────────────
 let showCn = false;
 let lyricLines = [];
 let currentLine = null;
 let pendingSong = null; // { id, name, artists, picId, lyricId, source }
+// 搜索历史常量
+const HISTORY_KEY = 'musicPlayerSearchHistory';
+const HISTORY_MAX = 10;
 
 // ─── Utility ─────────────────────────────────────────────────────────────────
 function fmt(s) {
@@ -337,6 +450,60 @@ async function apiFetch(params) {
     return r.json();
 }
 
+// ========== 需求4：搜索历史工具函数（新增，不改动原有代码结构） ==========
+// 获取本地存储历史
+function getSearchHistory() {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    return raw ? JSON.parse(raw) : [];
+}
+// 保存历史，去重+限制条数
+function saveSearchHistory(keyword) {
+    if(!keyword.trim()) return;
+    let list = getSearchHistory();
+    // 去除重复项
+    list = list.filter(item => item !== keyword);
+    // 新关键词放最前面
+    list.unshift(keyword);
+    // 限制最大数量
+    if(list.length > HISTORY_MAX) list = list.slice(0, HISTORY_MAX);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(list));
+    renderSearchHistory();
+}
+// 渲染历史记录DOM
+function renderSearchHistory() {
+    const list = getSearchHistory();
+    historyList.innerHTML = '';
+    if(list.length === 0) {
+        historyWrap.style.display = 'none';
+        return;
+    }
+    historyWrap.style.display = 'flex';
+    list.forEach(word => {
+        const item = document.createElement('div');
+        item.className = 'history-item';
+        item.innerHTML = `${esc(word)} <span class="history-del">×</span>`;
+        // 点击关键词搜索
+        item.addEventListener('click', (e)=>{
+            if(e.target.classList.contains('history-del')) return;
+            searchInput.value = word;
+            doSearch();
+        })
+        // 单条删除
+        item.querySelector('.history-del').addEventListener('click', (e)=>{
+            e.stopPropagation();
+            let arr = getSearchHistory().filter(i=>i!==word);
+            localStorage.setItem(HISTORY_KEY, JSON.stringify(arr));
+            renderSearchHistory();
+        })
+        historyList.appendChild(item);
+    })
+}
+// 清空全部历史
+clearHistoryBtn.addEventListener('click', ()=>{
+    localStorage.removeItem(HISTORY_KEY);
+    renderSearchHistory();
+})
+
 // ─── Search ───────────────────────────────────────────────────────────────────
 async function doSearch() {
     const q = searchInput.value.trim();
@@ -346,6 +513,9 @@ async function doSearch() {
     resultsEl.style.display = 'none';
     resultsEl.innerHTML = '';
     searchBtn.disabled = true;
+
+    // 需求4：搜索成功保存关键词到历史
+    saveSearchHistory(q);
 
     try {
         const data = await apiFetch({ types: 'search', source, name: q, count: 12, pages: 1 });
@@ -476,7 +646,8 @@ async function loadSong(song) {
 }
 
 // ─── Retry with alternate source ─────────────────────────────────────────────
-const SOURCE_FALLBACKS = ['netease','kuwo','tencent','kugou'];
+// 需求1：移除tencent、kugou备用源
+const SOURCE_FALLBACKS = ['netease','kuwo'];
 let fallbackIdx = 0;
 
 retryBtn.addEventListener('click', async () => {
@@ -615,6 +786,9 @@ searchInput.addEventListener('keydown', e => { if (e.key==='Enter') doSearch(); 
 document.addEventListener('click', e => {
     if (!e.target.closest('.search-area')) resultsEl.style.display = 'none';
 });
+
+// 页面初始化：加载历史记录
+renderSearchHistory();
 </script>
 </body>
 </html>
